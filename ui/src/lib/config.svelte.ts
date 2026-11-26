@@ -11,20 +11,21 @@ interface UiConfig {
 }
 
 let config: UiConfig = $state({ name: 'angos' });
-let loaded = false;
+/** One read per page load, shared by every caller waiting on it. */
+let loading: Promise<void> | null = null;
 
-export async function loadConfig(): Promise<void> {
-	if (loaded) return;
-
-	try {
-		const response = await fetch('/v2/_angos/ui/config');
-		if (response.ok) {
-			config = await response.json();
+export function loadConfig(): Promise<void> {
+	loading ??= (async () => {
+		try {
+			const response = await fetch('/v2/_angos/ui/config');
+			if (response.ok) {
+				config = await response.json();
+			}
+		} catch {
+			// Use defaults on error
 		}
-	} catch {
-		// Use defaults on error
-	}
-	loaded = true;
+	})();
+	return loading;
 }
 
 export function getRegistryName(): string {

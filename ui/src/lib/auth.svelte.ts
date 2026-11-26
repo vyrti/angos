@@ -113,6 +113,17 @@ export function signInAvailable(): boolean {
 	return getOidcConfig() !== null;
 }
 
+/**
+ * The browser's own credentials to send with a registry request. With sign-in
+ * offered the bearer is the only credential the UI uses, so the browser's are
+ * left out: a refusal's Basic challenge then cannot raise its password dialog.
+ * Without it they go along, for a Basic login or an authenticating proxy.
+ */
+export async function fetchCredentials(): Promise<RequestCredentials> {
+	await loadConfig();
+	return signInAvailable() ? 'omit' : 'same-origin';
+}
+
 export function signOut() {
 	session = null;
 	sessionStorage.removeItem(SESSION_KEY);

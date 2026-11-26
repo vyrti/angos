@@ -10,7 +10,7 @@ register(
 	'data:text/javascript,' +
 		encodeURIComponent(
 			`const stubs = {
-				'./auth.svelte': 'export const authHeaders = () => ({}); export const signInOnUnauthorized = async () => {};',
+				'./auth.svelte': 'export const authHeaders = () => ({}); export const fetchCredentials = async () => "same-origin"; export const signInOnUnauthorized = async () => {};',
 				'$app/paths': 'export const resolve = (path) => "/" + path;'
 			};
 			export const resolve = (specifier, context, next) => {

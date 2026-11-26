@@ -1,4 +1,4 @@
-import { authHeaders, signInOnUnauthorized } from './auth.svelte';
+import { authHeaders, fetchCredentials, signInOnUnauthorized } from './auth.svelte';
 import { isDigest } from './utils';
 
 export interface Platform {
@@ -190,6 +190,7 @@ export interface FetchResult<T> {
 export async function authedFetch(url: string, options?: RequestInit): Promise<Response> {
 	const response = await fetch(url, {
 		...options,
+		credentials: await fetchCredentials(),
 		headers: { ...options?.headers, ...authHeaders() }
 	});
 	if (response.status === 401) {
