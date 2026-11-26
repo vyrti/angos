@@ -2,12 +2,14 @@
 //! UI, and the operational probes. Everything OCI answers from `registry`.
 
 use std::borrow::Cow;
+use std::error::Error as StdError;
 use std::fmt::Display;
 
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::Body;
 use hyper::header::{
-    CACHE_CONTROL, CONTENT_TYPE, HeaderValue, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
+    CACHE_CONTROL, CONTENT_TYPE, HeaderValue, LOCATION, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
 };
 use hyper::{HeaderMap, Response, StatusCode};
 use prometheus::TEXT_FORMAT;
@@ -19,6 +21,8 @@ use angos_transport::{ResponseBody, build_response, json_headers, json_response}
 
 use crate::auth::TokenIssuer;
 use crate::command::server::error::Error;
+use crate::command::server::ui_sign_in::{AuthorizationRequest, CodeExchange, UiSignIn};
+use crate::configuration::TokenExchange;
 use crate::identity::ClientIdentity;
 use crate::metrics_provider::metrics_provider;
 use crate::registry::Registry;
@@ -30,13 +34,16 @@ pub struct UiConfigBody {
     pub oidc: Option<UiOidcBody>,
 }
 
-/// What a browser needs to run the authorization code flow itself. Every field
-/// is public by nature: the client is a public one, holding no secret.
+/// What the browser needs to sign in, either running the flow itself or
+/// through the registry. Every field is public by nature; a client secret
+/// stays with the registry.
 #[derive(Serialize)]
 pub struct UiOidcBody {
     pub issuer: String,
     pub client_id: String,
     pub scopes: String,
+    pub exchange: TokenExchange,
+    pub share_session: bool,
 }
 
 #[derive(Serialize)]
@@ -76,6 +83,64 @@ pub fn handle_get_token(
         StatusCode::OK,
         headers,
         ResponseBody::fixed(serde_json::to_vec(&body)?),
+    )?)
+}
+
+/// The registry serves its sign-in endpoints only for `exchange = "registry"`.
+fn sign_in_not_served() -> Error {
+    Error::NotFound("UI sign-in through the registry is not configured".to_string())
+}
+
+/// The cap on a sign-in form, which carries three opaque values.
+const SIGN_IN_FORM_LIMIT: usize = 16 * 1024;
+
+/// Starts a UI sign-in by redirecting the browser to the provider.
+pub async fn handle_ui_authorize(
+    sign_in: Option<&UiSignIn>,
+    query: Option<&str>,
+) -> Result<Response<ResponseBody>, Error> {
+    let sign_in = sign_in.ok_or_else(sign_in_not_served)?;
+    let request: AuthorizationRequest = serde_html_form::from_str(query.unwrap_or_default())
+        .map_err(|e| Error::BadRequest(format!("invalid sign-in request: {e}")))?;
+
+    let url = sign_in.authorization_url(&request).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(LOCATION, HeaderValue::try_from(url.as_str())?);
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(build_response(
+        StatusCode::FOUND,
+        headers,
+        ResponseBody::Empty,
+    )?)
+}
+
+/// Finishes a UI sign-in: redeems the code the provider redirected back with
+/// and answers the ID token the UI then sends as its bearer.
+pub async fn handle_ui_token<B>(
+    sign_in: Option<&UiSignIn>,
+    body: B,
+) -> Result<Response<ResponseBody>, Error>
+where
+    B: Body,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+{
+    let sign_in = sign_in.ok_or_else(sign_in_not_served)?;
+    let form = Limited::new(body, SIGN_IN_FORM_LIMIT)
+        .collect()
+        .await
+        .map_err(|e| Error::BadRequest(format!("unreadable sign-in form: {e}")))?
+        .to_bytes();
+    let exchange: CodeExchange = serde_html_form::from_bytes(&form)
+        .map_err(|e| Error::BadRequest(format!("invalid sign-in form: {e}")))?;
+
+    let token = sign_in.exchange_code(&exchange).await?;
+    // The body is a bearer credential, so no shared cache may store it.
+    let mut headers = json_headers();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(build_response(
+        StatusCode::OK,
+        headers,
+        ResponseBody::fixed(serde_json::to_vec(&token)?),
     )?)
 }
 

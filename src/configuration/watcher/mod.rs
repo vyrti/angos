@@ -313,8 +313,7 @@ async fn watch_config_loop(
         let tls_dirs = WatchedDirs::new(
             cached_config
                 .as_ref()
-                .map(|cfg| compute_tls_dirs(cfg, &primary_dir))
-                .unwrap_or_default(),
+                .map_or_default(|cfg| compute_tls_dirs(cfg, &primary_dir)),
         );
         let _watcher = build_watcher(&config.dirs.raw, &tls_dirs.raw, tx.clone())?;
         loop {

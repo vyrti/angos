@@ -31,15 +31,36 @@ provider = "dex"
 client_id = "angos-ui"
 ```
 
-| Option      | Type   | Default                  | Description                                          |
-|-------------|--------|--------------------------|------------------------------------------------------|
-| `provider`  | string | required                 | The `auth.oidc` provider to sign in against          |
-| `client_id` | string | required                 | The provider's public client, holding no secret      |
-| `scopes`    | string | `"openid profile email"` | The OAuth `scope` parameter, verbatim                |
+| Option          | Type   | Default                  | Description                                          |
+|-----------------|--------|--------------------------|------------------------------------------------------|
+| `provider`      | string | required                 | The `auth.oidc` provider to sign in against          |
+| `client_id`     | string | required                 | The client registered at the provider                |
+| `scopes`        | string | `"openid profile email"` | The OAuth `scope` parameter, verbatim                |
+| `exchange`      | string | `"browser"`, or `"registry"` with a `client_secret` | Who redeems the authorization code |
+| `client_secret` | string | -                        | The client's secret, for a confidential client; takes `exchange = "registry"` |
+| `share_session` | bool   | `false`                  | Share the sign-in between the registry's tabs and windows |
 
 `provider` names a configured `[auth.oidc.<name>]` section and the registry refuses
 to start when no such provider exists. The issuer is read from it, so the browser
 can only be sent to an issuer the registry validates tokens from.
+
+`exchange` decides who talks to the provider. The browser uses PKCE (S256) either
+way.
+
+- `"browser"` (the default for a public client): the page reads the issuer's
+  discovery document and redeems the code at its token endpoint itself, so the
+  provider must allow the registry's origin (CORS) on both.
+- `"registry"`: the registry does both, server to server, through the sign-in
+  endpoints below. The provider needs no CORS settings, a confidential client's
+  `client_secret` stays with the registry, and the UI's requests carry its bearer
+  alone, leaving out the browser's own credentials, so the browser's password
+  dialog never interrupts the sign-in. Setting `client_secret` implies it; the
+  registry refuses to start with a secret and `exchange = "browser"`.
+
+`share_session` keeps the sign-in in local storage, shared by every tab and window
+of the registry until the token expires, so a new one opens signed in with no
+redirect, and an expired one is renewed as the page loads. Left off, the sign-in
+lives in the tab's session storage and ends with the tab.
 
 Without this section the UI offers no sign-in and sends no credentials, which is
 what a registry readable anonymously or fronted by an authenticating proxy wants.
@@ -86,14 +107,53 @@ Returns the UI configuration.
   "oidc": {
     "issuer": "https://dex.example.com",
     "client_id": "angos-ui",
-    "scopes": "openid profile email"
+    "scopes": "openid profile email",
+    "exchange": "browser",
+    "share_session": false
   }
 }
 ```
 
 The `oidc` object is present only when `[ui.oidc]` is configured. Every field in
-it is public by nature: the client holds no secret. The endpoint itself needs no
-credentials, since the UI reads it before anyone has signed in.
+it is public by nature; `client_secret` is never part of it. The endpoint itself
+needs no credentials, since the UI reads it before anyone has signed in.
+
+### Sign-In
+
+Served for `exchange = "registry"` only.
+
+```
+GET /v2/_angos/ui/oidc/authorize?redirect_uri=…&state=…&nonce=…&code_challenge=…
+```
+
+Starts a sign-in: answers `302` to the provider's `authorization_endpoint`, adding
+`response_type=code`, the configured `client_id` and `scopes`, and
+`code_challenge_method=S256`. A request missing a parameter is refused with `400`.
+
+```
+POST /v2/_angos/ui/oidc/token
+Content-Type: application/x-www-form-urlencoded
+
+code=…&code_verifier=…&redirect_uri=…
+```
+
+Finishes it: redeems the code at the provider's `token_endpoint`, adding the client
+credentials, and answers the ID token alone, with `Cache-Control: no-store`:
+
+```json
+{ "id_token": "eyJhbGciOi…" }
+```
+
+The provider's access and refresh tokens are dropped: they would let the browser
+act at the provider as the user. A client secret travels in a Basic header, or in
+the form when the provider's discovery document offers `client_secret_post` and
+not `client_secret_basic`. A code the provider refuses answers `400` naming the
+provider's `error`; a provider that cannot be reached, or answers without an ID
+token, answers `503`.
+
+Both endpoints answer `404` unless `[ui.oidc]` takes `exchange = "registry"`, and
+both are the `ui-config` action to access policies, so the rule that lets the UI
+load also lets a browser sign in.
 
 ### Static Assets
 
@@ -108,7 +168,7 @@ UI-specific actions for access policies:
 | Action              | Description                               |
 |---------------------|-------------------------------------------|
 | `ui-asset`          | Static files (JS, CSS, images)            |
-| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`) |
+| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`), and the sign-in endpoints (`/v2/_angos/ui/oidc/...`) of `exchange = "registry"` |
 | `list-repositories` | Repository list view                      |
 | `list-namespaces`   | Namespace list view                       |
 | `list-revisions`    | Manifest list view                        |

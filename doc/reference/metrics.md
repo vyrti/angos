@@ -120,6 +120,8 @@ The `route` label is the endpoint name. It is close to the action name an access
 | `list-catalog`       | List repositories, `/v2/_catalog` |
 | `ui-asset`           | UI static files |
 | `ui-config`          | UI configuration |
+| `ui-authorize`       | UI sign-in start, the redirect to the provider |
+| `ui-token`           | UI sign-in finish, the code exchange |
 | `get-token`          | Token service |
 | `list-repositories`  | Extension API |
 | `list-namespaces`    | Extension API |

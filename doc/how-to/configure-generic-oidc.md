@@ -103,6 +103,17 @@ issuer = "https://login.microsoftonline.com/your-tenant-id/v2.0"
 required_audience = "api://your-app-id"
 ```
 
+### Forgejo and Gitea
+
+```toml
+[auth.oidc.forgejo]
+issuer = "https://git.example.com"   # exactly as its discovery document spells it
+required_audience = "your-client-id"
+```
+
+The tokens are ID tokens issued to an OAuth2 application, which is what the web
+UI signs in with: [Enable the Web UI](enable-web-ui.md#forgejo-and-gitea).
+
 ### Kubernetes API Server
 
 Validating a cluster's service-account tokens takes a private CA and an

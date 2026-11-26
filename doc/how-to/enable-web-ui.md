@@ -82,13 +82,19 @@ Repositories → Namespaces → Manifests → Details
 The UI signs a browser in against one of the registry's own OIDC providers and
 sends the resulting ID token as a bearer on every call it makes.
 
-### Step 1: Register a Public Client
+### Step 1: Register a Client
 
-At the provider, create a public client (no secret, PKCE required) with:
+At the provider, create a client with the registry's root, such as
+`https://registry.example.com/`, as its **redirect URI**, and pick who redeems
+the authorization code:
 
-- **Redirect URI**: the registry's root, such as `https://registry.example.com/`
-- **CORS / web origins**: the same origin, since the browser reads the provider's
-  discovery document and calls its token endpoint directly
+- **The browser** (the default): a public client (no secret, PKCE), with the
+  registry's origin allowed for CORS on the provider's discovery and token
+  endpoints, since the page calls both directly.
+- **The registry** (`exchange = "registry"`): a public or a confidential client,
+  and no CORS. The registry reads the discovery document and redeems the code
+  server to server, keeping a confidential client's secret. This is the one for
+  a provider that serves no CORS headers, such as Forgejo or Gitea.
 
 ### Step 2: Point the UI at a Provider
 
@@ -104,6 +110,9 @@ enabled = true
 provider = "dex"
 client_id = "angos-ui"
 scopes = "openid profile email"      # default
+# exchange = "registry"              # the registry redeems the code
+# client_secret = "..."              # confidential clients, implies "registry"
+# share_session = true               # one sign-in for every tab and window
 ```
 
 `provider` names the `[auth.oidc.<name>]` section above it, so the browser is
@@ -125,6 +134,74 @@ rules = [
 ]
 ```
 
+### Forgejo and Gitea
+
+Forgejo and Gitea are OIDC providers of their own, and serve no CORS headers by
+default, which the registry-run exchange does not need.
+
+1. Create an OAuth2 application: **Settings → Applications → Manage OAuth2
+   applications** for one user, the same page under an organization's settings,
+   or **Site Administration → Integrations → Applications** for the instance.
+   Set the redirect URI to the registry's root. Keep **Confidential client**
+   ticked to get a secret, or untick it for a public client.
+2. Read the issuer from `https://git.example.com/.well-known/openid-configuration`
+   and copy it exactly: Forgejo spells it without a trailing slash, Gitea with
+   one, and the `iss` of every token matches it.
+3. Configure the provider and the sign-in:
+
+```toml
+[auth.oidc.forgejo]
+issuer = "https://git.example.com"
+required_audience = "<client id>"
+
+[ui]
+enabled = true
+
+[ui.oidc]
+provider = "forgejo"
+client_id = "<client id>"
+client_secret = "<client secret>"    # implies exchange = "registry"
+scopes = "openid profile email groups public-only"
+share_session = true
+```
+
+The client secret makes the registry redeem the code, which Forgejo needs: it
+serves no CORS headers unless its `[cors]` section allows the registry's origin.
+A public Forgejo client works too, with `exchange = "registry"` set instead of
+the secret, though Forgejo then asks for consent at every sign-in.
+
+`public-only` is what keeps this a sign-in and nothing more. Forgejo issues an
+API access token alongside every ID token, and one granted no API scope may do
+anything the user can, private repositories and organizations included. Naming
+`public-only` alone grants it no permission at all, so every API call needing
+one is refused. The registry drops that token in any case, keeping only the ID
+token, but this way it is worthless even while it exists. Forgejo 15's consent
+page still shows its fixed warning about full account access the first time; for
+this client it no longer holds.
+
+A user who approved the client with other scopes keeps that grant, and Forgejo
+reuses it without asking: revoke it under **Settings → Applications → Authorized
+OAuth2 Applications** to pick up the new scopes.
+
+With the `groups` scope the ID token carries `groups`: the user's organizations,
+plus `org:team` for each team. `preferred_username` is the login name. A user in
+no organization gets no `groups` claim at all, and reading a missing claim stops
+rule evaluation, so test for it first:
+
+```toml
+[global.access_policy]
+default = "deny"
+rules = [
+  "request.action == 'ui-asset' || request.action == 'ui-config'",
+  "identity.oidc != null && 'groups' in identity.oidc.claims && 'my-org:maintainers' in identity.oidc.claims['groups']",
+  "identity.oidc != null && 'groups' in identity.oidc.claims && 'my-org' in identity.oidc.claims['groups'] && request.action.startsWith('list-')",
+]
+```
+
+A Forgejo ID token lives as long as its access tokens,
+`[oauth2] ACCESS_TOKEN_EXPIRATION_TIME`, an hour by default; the UI asks to sign in
+again once it expires. Forgejo skips its consent page after the first approval.
+
 ### How It Behaves
 
 - A **Sign in** button sits in the top bar, next to the theme switcher.
@@ -132,11 +209,23 @@ rules = [
   so a private registry needs no click, while a registry readable anonymously is
   still browsed without signing in. It starts once per page load, so a token the
   registry keeps refusing cannot bounce the browser back and forth.
-- The token lives in the tab's session storage and is dropped when it expires or
-  when the tab closes. There is no refresh: an expired session means signing in
-  again.
-- **Sign out** clears the token here only. It does not end the session at the
-  provider, so signing in again may not prompt for credentials.
+- Returning from the provider takes one page load: the code is redeemed before
+  the page renders, which then opens where the user left, signed in. While the
+  browser is handed to the provider the page shows "Signing in".
+- The token lives in the tab's session storage and ends with the tab, unless
+  `share_session` keeps it in local storage, shared by every tab and window of
+  the registry, so a new one opens signed in with no redirect until the token
+  expires. There is no refresh: an expired token means signing in again, which
+  a shared session does as the page loads, taking no click while the provider's
+  own session lasts.
+- **Sign out** stops automatic sign-in until **Sign in** is clicked, so a private
+  registry then answers "sign in required" rather than signing straight back in;
+  with `share_session` it signs out every tab. It does not end the session at
+  the provider, so signing in again may not prompt for credentials.
+- A refused request's `WWW-Authenticate: Basic` challenge makes the browser offer
+  its own password dialog. With `exchange = "registry"` the UI's requests leave
+  the browser's credentials out, so the dialog never appears; with the browser
+  exchange they go along as before, for a password login or a proxy's cookie.
 - Download links (ORAS artifact files, layer file downloads) are followed by the
   browser rather than fetched, so they carry no token and work only where the
   policy allows the `get-blob` action anonymously.
@@ -269,9 +358,16 @@ Open the UI and use **Sign in** to check an OIDC setup end to end.
 
 ### Sign-In Fails
 
-- Check the provider allows the registry's origin (CORS) on its discovery and
-  token endpoints; the browser calls both directly.
 - Check the redirect URI registered at the provider is the registry's root.
+- With the browser exchange, check the provider allows the registry's origin
+  (CORS) on its discovery and token endpoints; the browser calls both directly.
+  A provider that cannot, such as Forgejo by default, takes
+  `exchange = "registry"`.
+- With the registry exchange, a `503` from `/v2/_angos/ui/oidc/...` is the
+  registry failing to reach the provider, or reading a discovery document whose
+  `issuer` differs from the configured one; the registry log names which.
+- "Sign-in failed: the provider refused the code: invalid_client" is a wrong
+  `client_id` or `client_secret`, or a secret missing for a confidential client.
 - A 401 that persists after signing in is the registry refusing the token: check
   `required_audience` against the client id, and that the provider's `issuer`
   matches the `iss` its tokens carry.

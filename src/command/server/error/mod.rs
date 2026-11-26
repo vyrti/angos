@@ -34,7 +34,7 @@ pub enum Error {
     InvalidHeader(#[from] InvalidHeaderValue),
     #[error("failed to serialize response body: {0}")]
     Serialization(#[from] JsonError),
-    #[error("Error {status_code}: {code}{}", msg.as_deref().map(|m| format!(" - {m}")).unwrap_or_default())]
+    #[error("Error {status_code}: {code}{}", msg.as_deref().map_or_default(|m| format!(" - {m}")))]
     Custom {
         status_code: StatusCode,
         code: String,

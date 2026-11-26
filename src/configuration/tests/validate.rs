@@ -193,6 +193,31 @@ fn ui_sign_in_accepts_a_configured_oidc_provider() {
     assert_eq!(configuration.ui.oidc.unwrap().client_id, "angos-ui");
 }
 
+/// The browser exchange would hand the secret to every visitor.
+#[test]
+fn ui_sign_in_refuses_a_secret_with_the_browser_exchange() {
+    let config = config_toml(
+        r#"
+    [ui]
+    enabled = true
+
+    [ui.oidc]
+    provider = "dex"
+    client_id = "angos-ui"
+    client_secret = "s"
+    exchange = "browser"
+
+    [auth.oidc.dex]
+    issuer = "https://dex.example.com"
+    "#,
+    );
+
+    match Configuration::load_from_str(&config) {
+        Err(Error::InvalidFormat(msg)) => assert!(msg.contains("client_secret"), "{msg}"),
+        other => panic!("Expected InvalidFormat error, got {other:?}"),
+    }
+}
+
 /// Loads the minimal configuration with a scanner and `extra` appended.
 fn scan_error(extra: &str) -> String {
     let config = config_toml(&format!(

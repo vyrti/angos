@@ -117,8 +117,7 @@ impl ReplicationJob {
 fn lock_key_base(op: &str, target: &ReplicationTarget) -> String {
     let reference = target
         .reference()
-        .map(|reference| reference.to_string())
-        .unwrap_or_default();
+        .map_or_default(|reference| reference.to_string());
     format!(
         "{}.{op}.{}:{}:{reference}",
         Queue::Replication,
@@ -136,10 +135,7 @@ fn replication_lock_key(job: &ReplicationJob) -> String {
         ReplicationJob::Delete { .. } => format!(
             "{}@{}",
             lock_key_base("delete", target),
-            target
-                .source_ts
-                .map(|ts| ts.to_rfc3339())
-                .unwrap_or_default()
+            target.source_ts.map_or_default(|ts| ts.to_rfc3339())
         ),
         ReplicationJob::Push { .. } => lock_key_base("push", target),
     }

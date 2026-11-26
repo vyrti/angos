@@ -14,8 +14,10 @@ use crate::jobs::{JobState, Queue};
 /// Shared with the dispatcher, which answers an unserved method here with 405.
 pub const TOKEN_PATH: &str = "/token";
 
-/// Served by the binary, so matched before the extension parser sees it.
+/// Served by the binary, so matched before the extension parser sees them.
 const UI_CONFIG_PATH: &str = "/v2/_angos/ui/config";
+const UI_AUTHORIZE_PATH: &str = "/v2/_angos/ui/oidc/authorize";
+const UI_TOKEN_PATH: &str = "/v2/_angos/ui/oidc/token";
 
 /// An operation of one of the service surfaces, whose crates parse their own
 /// paths, or one of the routes the binary itself serves.
@@ -25,6 +27,10 @@ pub enum Route {
         path: String,
     },
     UiConfig,
+    /// Starts a UI sign-in: redirects the browser to the provider.
+    UiAuthorize,
+    /// Finishes a UI sign-in: redeems the provider's code for an ID token.
+    UiToken,
     Token,
     Healthz,
     Readyz,
@@ -49,6 +55,8 @@ pub fn parse(method: &Method, uri: &Uri) -> Option<Route> {
         "/metrics" => return (method == Method::GET).then_some(Route::Metrics),
         TOKEN_PATH => return (method == Method::GET).then_some(Route::Token),
         UI_CONFIG_PATH if method == Method::GET => return Some(Route::UiConfig),
+        UI_AUTHORIZE_PATH if method == Method::GET => return Some(Route::UiAuthorize),
+        UI_TOKEN_PATH if method == Method::POST => return Some(Route::UiToken),
         _ => {}
     }
 
@@ -79,6 +87,8 @@ impl Route {
         match self {
             Route::UiAsset { .. } => "ui-asset",
             Route::UiConfig => "ui-config",
+            Route::UiAuthorize => "ui-authorize",
+            Route::UiToken => "ui-token",
             Route::Token => "get-token",
             Route::Healthz => "healthz",
             Route::Readyz => "readyz",
@@ -114,7 +124,9 @@ impl From<&Route> for Action {
     fn from(route: &Route) -> Self {
         match route {
             Route::UiAsset { path } => Action::UiAsset { path: path.clone() },
-            Route::UiConfig => Action::UiConfig,
+            // The sign-in runs before anyone is signed in, so it is allowed
+            // wherever the UI's configuration is.
+            Route::UiConfig | Route::UiAuthorize | Route::UiToken => Action::UiConfig,
             Route::Token => Action::Token,
             Route::Healthz => Action::Healthz,
             Route::Readyz => Action::Readyz,

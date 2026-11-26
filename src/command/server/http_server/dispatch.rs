@@ -71,7 +71,15 @@ async fn dispatch_route(
     match route {
         Route::UiAsset { path } if context.enable_ui => handlers::handle_ui_asset(&path),
         Route::UiConfig if context.enable_ui => json_response(StatusCode::OK, &context.ui_config),
-        Route::UiAsset { .. } | Route::UiConfig => handle_unknown_route(parts),
+        Route::UiAuthorize if context.enable_ui => {
+            handlers::handle_ui_authorize(context.ui_sign_in.as_ref(), parts.uri.query()).await
+        }
+        Route::UiToken if context.enable_ui => {
+            handlers::handle_ui_token(context.ui_sign_in.as_ref(), incoming).await
+        }
+        Route::UiAsset { .. } | Route::UiConfig | Route::UiAuthorize | Route::UiToken => {
+            handle_unknown_route(parts)
+        }
         Route::Token => {
             let Some(token_issuer) = context.token_issuer() else {
                 return Err(Error::NotFound(

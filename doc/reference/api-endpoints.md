@@ -786,6 +786,19 @@ Returns UI configuration.
 }
 ```
 
+### UI Sign-In
+
+```
+GET /v2/_angos/ui/oidc/authorize
+POST /v2/_angos/ui/oidc/token
+```
+
+The provider side of the UI's OIDC sign-in, run by the registry when
+`[ui.oidc]` takes `exchange = "registry"`, and `404` otherwise: the first
+redirects the browser to the provider, the second redeems the code it returns
+with for an ID token. Both are the `ui-config` action. See the
+[Web UI Reference](ui.md#sign-in) for their parameters and answers.
+
 ---
 
 ## Authentication
