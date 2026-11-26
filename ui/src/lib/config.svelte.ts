@@ -3,6 +3,10 @@ interface OidcConfig {
 	client_id: string;
 	/** The OAuth `scope` parameter, verbatim. */
 	scopes: string;
+	/** Who redeems the code: the page itself, or the registry for it. */
+	exchange: 'browser' | 'registry';
+	/** Whether every tab and window shares one sign-in. */
+	share_session: boolean;
 }
 
 interface UiConfig {
@@ -17,7 +21,10 @@ let loading: Promise<void> | null = null;
 export function loadConfig(): Promise<void> {
 	loading ??= (async () => {
 		try {
-			const response = await fetch('/v2/_angos/ui/config');
+			// The app waits on this before it starts, so it must not wait forever.
+			const response = await fetch('/v2/_angos/ui/config', {
+				signal: AbortSignal.timeout(10000)
+			});
 			if (response.ok) {
 				config = await response.json();
 			}

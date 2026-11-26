@@ -16,7 +16,7 @@ use crate::command::server::router::Route;
 use crate::command::server::server_context::{
     ServerContext, build_ui_config, resolve_forwarded_ip,
 };
-use crate::configuration::{Configuration, TrustedProxy};
+use crate::configuration::{Configuration, TokenExchange, TrustedProxy};
 use crate::event_webhook::dispatcher::EventDispatcher;
 use crate::event_webhook::event::{Event, EventSubject};
 use crate::identity::RequestScheme;
@@ -521,6 +521,33 @@ fn the_ui_config_carries_the_sign_in_provider_issuer() {
     assert_eq!(oidc.issuer, "https://dex.example.com");
     assert_eq!(oidc.client_id, "angos-ui");
     assert_eq!(oidc.scopes, "openid groups");
+    assert_eq!(oidc.exchange, TokenExchange::Browser);
+    assert!(!oidc.share_session);
+}
+
+/// The registry's own sign-in endpoints exist for the registry exchange only,
+/// so a deployment keeping the browser exchange serves nothing new.
+#[tokio::test]
+async fn the_registry_runs_the_sign_in_for_the_registry_exchange_only() {
+    for (exchange, served) in [("", false), (r#"exchange = "registry""#, true)] {
+        let config = load_config(&format!(
+            r#"
+        [ui]
+        enabled = true
+
+        [ui.oidc]
+        provider = "dex"
+        client_id = "angos-ui"
+        {exchange}
+
+        [auth.oidc.dex]
+        issuer = "https://dex.example.com"
+        "#
+        ));
+
+        let context = create_test_server_context_from_config(&config).await;
+        assert_eq!(context.ui_sign_in.is_some(), served, "{exchange:?}");
+    }
 }
 
 #[test]

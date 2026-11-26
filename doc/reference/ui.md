@@ -35,17 +35,32 @@ client_id = "angos-ui"
 |-----------------|--------|--------------------------|------------------------------------------------------|
 | `provider`      | string | required                 | The `auth.oidc` provider to sign in against          |
 | `client_id`     | string | required                 | The client registered at the provider                |
-| `client_secret` | string | -                        | The client's secret, for a confidential client       |
 | `scopes`        | string | `"openid profile email"` | The OAuth `scope` parameter, verbatim                |
+| `exchange`      | string | `"browser"`, or `"registry"` with a `client_secret` | Who redeems the authorization code |
+| `client_secret` | string | -                        | The client's secret, for a confidential client; takes `exchange = "registry"` |
+| `share_session` | bool   | `false`                  | Share the sign-in between the registry's tabs and windows |
 
 `provider` names a configured `[auth.oidc.<name>]` section and the registry refuses
 to start when no such provider exists. The issuer is read from it, so the browser
 can only be sent to an issuer the registry validates tokens from.
 
-The registry runs the provider side of the flow: it reads the issuer's discovery
-document and redeems the authorization code itself, so the provider needs no
-CORS settings, and `client_secret` never reaches the browser. Leave it out for a
-public client. The browser always uses PKCE (S256), whichever kind of client it is.
+`exchange` decides who talks to the provider. The browser uses PKCE (S256) either
+way.
+
+- `"browser"` (the default for a public client): the page reads the issuer's
+  discovery document and redeems the code at its token endpoint itself, so the
+  provider must allow the registry's origin (CORS) on both.
+- `"registry"`: the registry does both, server to server, through the sign-in
+  endpoints below. The provider needs no CORS settings, a confidential client's
+  `client_secret` stays with the registry, and the UI's requests carry its bearer
+  alone, leaving out the browser's own credentials, so the browser's password
+  dialog never interrupts the sign-in. Setting `client_secret` implies it; the
+  registry refuses to start with a secret and `exchange = "browser"`.
+
+`share_session` keeps the sign-in in local storage, shared by every tab and window
+of the registry until the token expires, so a new one opens signed in with no
+redirect, and an expired one is renewed as the page loads. Left off, the sign-in
+lives in the tab's session storage and ends with the tab.
 
 Without this section the UI offers no sign-in and sends no credentials, which is
 what a registry readable anonymously or fronted by an authenticating proxy wants.
@@ -92,7 +107,9 @@ Returns the UI configuration.
   "oidc": {
     "issuer": "https://dex.example.com",
     "client_id": "angos-ui",
-    "scopes": "openid profile email"
+    "scopes": "openid profile email",
+    "exchange": "browser",
+    "share_session": false
   }
 }
 ```
@@ -102,6 +119,8 @@ it is public by nature; `client_secret` is never part of it. The endpoint itself
 needs no credentials, since the UI reads it before anyone has signed in.
 
 ### Sign-In
+
+Served for `exchange = "registry"` only.
 
 ```
 GET /v2/_angos/ui/oidc/authorize?redirect_uri=…&state=…&nonce=…&code_challenge=…
@@ -132,9 +151,9 @@ not `client_secret_basic`. A code the provider refuses answers `400` naming the
 provider's `error`; a provider that cannot be reached, or answers without an ID
 token, answers `503`.
 
-Both endpoints answer `404` when `[ui.oidc]` is not configured, and both are the
-`ui-config` action to access policies, so the rule that lets the UI load also
-lets a browser sign in.
+Both endpoints answer `404` unless `[ui.oidc]` takes `exchange = "registry"`, and
+both are the `ui-config` action to access policies, so the rule that lets the UI
+load also lets a browser sign in.
 
 ### Static Assets
 
@@ -149,7 +168,7 @@ UI-specific actions for access policies:
 | Action              | Description                               |
 |---------------------|-------------------------------------------|
 | `ui-asset`          | Static files (JS, CSS, images)            |
-| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`) and the sign-in endpoints (`/v2/_angos/ui/oidc/...`) |
+| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`), and the sign-in endpoints (`/v2/_angos/ui/oidc/...`) of `exchange = "registry"` |
 | `list-repositories` | Repository list view                      |
 | `list-namespaces`   | Namespace list view                       |
 | `list-revisions`    | Manifest list view                        |

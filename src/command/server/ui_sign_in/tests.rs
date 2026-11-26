@@ -27,6 +27,8 @@ fn sign_in_config(client_secret: Option<&str>) -> UiOidcConfig {
         client_id: "angos-ui".to_string(),
         client_secret: client_secret.map(|secret| Secret::new(secret.to_string())),
         scopes: "openid profile groups".to_string(),
+        exchange_setting: None,
+        share_session: false,
     }
 }
 

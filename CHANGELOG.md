@@ -8,21 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `client_secret` in `[ui.oidc]` signs the web UI in with a confidential client; the registry keeps the secret, so it never reaches the browser.
-
-### Changed
-
-- The web UI's sign-in runs its discovery and code exchange through the registry (`/v2/_angos/ui/oidc/authorize` and `/v2/_angos/ui/oidc/token`, both the `ui-config` action) instead of calling the provider from the browser, so a provider serving no CORS headers, such as Forgejo or Gitea, works, and the browser receives the ID token alone, not the provider's access and refresh tokens.
+- `exchange = "registry"` in `[ui.oidc]` has the registry run the provider side of the web UI's sign-in, discovery and the code exchange, through `/v2/_angos/ui/oidc/authorize` and `/v2/_angos/ui/oidc/token` (both the `ui-config` action), so a provider serving no CORS headers, such as Forgejo or Gitea, works. The browser receives the ID token alone, not the provider's access and refresh tokens, and its own credentials are left out of the UI's requests, so the browser's password dialog no longer interrupts sign-in. The default, `"browser"`, keeps the flow the UI always ran.
+- `client_secret` in `[ui.oidc]` signs the web UI in with a confidential client, and implies `exchange = "registry"`: the registry keeps the secret, so it never reaches the browser.
+- `share_session = true` in `[ui.oidc]` keeps the web UI's sign-in in local storage, shared by every tab and window until the token expires, so a new one opens signed in instead of repeating the redirects, and an expired one is renewed as the page loads.
 
 ### Fixed
 
 - An OIDC issuer spelled with a trailing slash, as Gitea's is, is discovered at `<issuer>/.well-known/openid-configuration` instead of with a doubled slash.
 - The web UI starts sign-in on a refused request even when the refusal arrives before the UI's configuration has loaded, instead of staying signed out.
-- With `[ui.oidc]` configured, the web UI's requests leave out the browser's own credentials, so a refused request no longer raises the browser's password dialog before sign-in starts.
-- While the web UI hands the browser to the provider it shows "Signing in" instead of flashing the errors of the requests it made before the session existed.
-- The web UI keeps its sign-in in local storage, shared by every tab and window, so a new one opens signed in instead of repeating the redirects; the code the provider returns with is redeemed before the page renders, so returning takes one page load instead of three; and an expired sign-in is renewed as the page loads instead of after its requests are refused.
-- **Sign out** in the web UI stays signed out, in every tab, instead of signing straight back in through the provider's own session; the registry's refusals then read "sign in required".
+- Returning from the provider takes the web UI one page load instead of three: the code is redeemed before the page renders, which then opens where the user left.
+- While the web UI hands the browser to the provider it shows "Signing in" instead of flashing the errors of the requests it made before the session existed, and a failed provider discovery shows its error instead.
+- **Sign out** in the web UI stays signed out instead of signing straight back in through the provider's own session; the registry's refusals then read "sign in required".
 - A sign-in the provider returns from is no longer raced by a fresh one started from the same page's refused requests, so a failed code exchange shows its error instead of sending the browser back to the provider.
+- A bearer token the registry refuses is dropped, so the web UI signs in again instead of sending it until it expires.
 
 ## 1.13.0
 

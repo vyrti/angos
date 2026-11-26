@@ -22,6 +22,7 @@ use angos_transport::{ResponseBody, build_response, json_headers, json_response}
 use crate::auth::TokenIssuer;
 use crate::command::server::error::Error;
 use crate::command::server::ui_sign_in::{AuthorizationRequest, CodeExchange, UiSignIn};
+use crate::configuration::TokenExchange;
 use crate::identity::ClientIdentity;
 use crate::metrics_provider::metrics_provider;
 use crate::registry::Registry;
@@ -33,14 +34,16 @@ pub struct UiConfigBody {
     pub oidc: Option<UiOidcBody>,
 }
 
-/// Tells the browser sign-in is offered, and against what. Every field is
-/// public by nature; a client secret stays with the registry, which runs the
-/// provider side of the flow.
+/// What the browser needs to sign in, either running the flow itself or
+/// through the registry. Every field is public by nature; a client secret
+/// stays with the registry.
 #[derive(Serialize)]
 pub struct UiOidcBody {
     pub issuer: String,
     pub client_id: String,
     pub scopes: String,
+    pub exchange: TokenExchange,
+    pub share_session: bool,
 }
 
 #[derive(Serialize)]
@@ -83,6 +86,11 @@ pub fn handle_get_token(
     )?)
 }
 
+/// The registry serves its sign-in endpoints only for `exchange = "registry"`.
+fn sign_in_not_served() -> Error {
+    Error::NotFound("UI sign-in through the registry is not configured".to_string())
+}
+
 /// The cap on a sign-in form, which carries three opaque values.
 const SIGN_IN_FORM_LIMIT: usize = 16 * 1024;
 
@@ -91,8 +99,7 @@ pub async fn handle_ui_authorize(
     sign_in: Option<&UiSignIn>,
     query: Option<&str>,
 ) -> Result<Response<ResponseBody>, Error> {
-    let sign_in =
-        sign_in.ok_or_else(|| Error::NotFound("UI sign-in is not configured".to_string()))?;
+    let sign_in = sign_in.ok_or_else(sign_in_not_served)?;
     let request: AuthorizationRequest = serde_html_form::from_str(query.unwrap_or_default())
         .map_err(|e| Error::BadRequest(format!("invalid sign-in request: {e}")))?;
 
@@ -117,8 +124,7 @@ where
     B: Body,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
-    let sign_in =
-        sign_in.ok_or_else(|| Error::NotFound("UI sign-in is not configured".to_string()))?;
+    let sign_in = sign_in.ok_or_else(sign_in_not_served)?;
     let form = Limited::new(body, SIGN_IN_FORM_LIMIT)
         .collect()
         .await

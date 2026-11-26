@@ -30,7 +30,7 @@ pub use regex_pattern::RegexPattern;
 pub use registry_storage::RegistryStorageConfig;
 pub use server::ServerConfig;
 pub use trusted_proxy::TrustedProxy;
-pub use ui::{UiConfig, UiOidcConfig};
+pub use ui::{TokenExchange, UiConfig, UiOidcConfig};
 
 #[cfg(test)]
 mod tests;
@@ -195,6 +195,12 @@ fn validate_ui(ui: &UiConfig, oidc: &HashMap<String, oidc::Config>) -> Result<()
             "ui.oidc.provider '{}' has no matching auth.oidc provider",
             sign_in.provider
         )));
+    }
+    // The browser exchange would have to hand the secret to every visitor.
+    if sign_in.client_secret.is_some() && sign_in.exchange() == TokenExchange::Browser {
+        return Err(Error::InvalidFormat(
+            "ui.oidc.client_secret takes exchange = \"registry\"".to_string(),
+        ));
     }
     Ok(())
 }

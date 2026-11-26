@@ -109,58 +109,62 @@ function parseSession(stored: string | null): Session | null {
 	}
 }
 
-/** Kept in local storage, so every tab and window of the registry shares one
- * sign-in until the token expires, rather than each repeating the redirects.
- * Storage the browser blocks only costs that sharing. */
-function loadSession(): Session | null {
+/** Where the session lives: the tab's own session storage, dropped with the
+ * tab, unless `share_session` keeps it in local storage, shared by every tab
+ * and window of the registry until the token expires. Read once the
+ * configuration has loaded, which `finishSignIn` awaits before the app starts. */
+function sessionStore(): Storage | null {
 	if (typeof window === 'undefined') return null;
 	try {
-		return parseSession(localStorage.getItem(SESSION_KEY));
+		return getOidcConfig()?.share_session ? localStorage : sessionStorage;
 	} catch {
 		return null;
 	}
 }
 
-let session: Session | null = $state(loadSession());
-
-if (typeof window !== 'undefined') {
-	// Another tab signing in or out signs this one in or out too.
-	window.addEventListener('storage', (event) => {
-		if (event.key === SESSION_KEY) session = parseSession(event.newValue);
-	});
+function readStored(key: string): string | null {
+	try {
+		return sessionStore()?.getItem(key) ?? null;
+	} catch {
+		return null;
+	}
 }
 
-function setSignedOut(signedOut: boolean) {
+function writeStored(key: string, value: string | null) {
 	try {
-		if (signedOut) {
-			localStorage.setItem(SIGNED_OUT_KEY, '1');
+		const store = sessionStore();
+		if (value === null) {
+			store?.removeItem(key);
 		} else {
-			localStorage.removeItem(SIGNED_OUT_KEY);
+			store?.setItem(key, value);
 		}
 	} catch {
-		// Blocked storage: nothing outlives this page anyway.
+		// Blocked storage: the value lives in this page only.
 	}
 }
 
-function signedOut(): boolean {
-	try {
-		return localStorage.getItem(SIGNED_OUT_KEY) !== null;
-	} catch {
-		return false;
-	}
+let session: Session | null = $state(null);
+
+if (typeof window !== 'undefined') {
+	// With a shared session, another tab signing in or out does it here too.
+	window.addEventListener('storage', (event) => {
+		if (event.key === SESSION_KEY && event.storageArea === sessionStore()) {
+			session = parseSession(event.newValue);
+		}
+	});
 }
 
 function storeSession(next: Session | null) {
 	session = next;
-	try {
-		if (next) {
-			localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-		} else {
-			localStorage.removeItem(SESSION_KEY);
-		}
-	} catch {
-		// Blocked storage: the session lives in this page only.
-	}
+	writeStored(SESSION_KEY, next ? JSON.stringify(next) : null);
+}
+
+function setSignedOut(signedOut: boolean) {
+	writeStored(SIGNED_OUT_KEY, signedOut ? '1' : null);
+}
+
+function signedOut(): boolean {
+	return readStored(SIGNED_OUT_KEY) !== null;
 }
 
 /** The session while it is still valid. There is no refresh token, so an
@@ -184,14 +188,15 @@ export function signInAvailable(): boolean {
 }
 
 /**
- * The browser's own credentials to send with a registry request. With sign-in
- * offered the bearer is the only credential the UI uses, so the browser's are
- * left out: a refusal's Basic challenge then cannot raise its password dialog.
- * Without it they go along, for a Basic login or an authenticating proxy.
+ * The browser's own credentials to send with a registry request. With the
+ * registry running the sign-in, the bearer is the only credential the UI uses,
+ * so the browser's are left out: a refusal's Basic challenge then cannot raise
+ * its password dialog before sign-in starts. Otherwise they go along as they
+ * always did, for a Basic login or an authenticating proxy.
  */
 export async function fetchCredentials(): Promise<RequestCredentials> {
 	await loadConfig();
-	return signInAvailable() ? 'omit' : 'same-origin';
+	return getOidcConfig()?.exchange === 'registry' ? 'omit' : 'same-origin';
 }
 
 export function signOut() {
@@ -208,14 +213,31 @@ function redirectUri(): string {
 	return `${location.origin}/`;
 }
 
+/** The provider's endpoints, from its discovery document, which the browser
+ * exchange reads itself. */
+async function endpoints(issuer: string): Promise<{ authorization: string; token: string }> {
+	const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
+	const response = await fetch(url);
+	if (!response.ok) {
+		throw new Error(`OIDC discovery failed (HTTP ${response.status})`);
+	}
+	const document = await response.json();
+	return {
+		authorization: document.authorization_endpoint,
+		token: document.token_endpoint
+	};
+}
+
 /**
- * Sends the browser to the provider by way of the registry, which discovers
- * the authorization endpoint itself: the provider is never called from the
- * page, so it needs to serve no CORS headers.
+ * Sends the browser to the provider. The registry exchange goes by way of the
+ * registry, which discovers the authorization endpoint itself, so the provider
+ * needs no CORS; the browser exchange reads the provider's discovery document
+ * and goes straight there. A failure leaves the page where it is, saying so.
  */
 export async function signIn(): Promise<void> {
 	await loadConfig();
-	if (!signInAvailable()) return;
+	const config = getOidcConfig();
+	if (!config) return;
 	setSignedOut(false);
 	underway = true;
 
@@ -227,13 +249,35 @@ export async function signIn(): Promise<void> {
 	};
 	sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
 
-	const params = new URLSearchParams({
-		redirect_uri: redirectUri(),
-		state: pending.state,
-		nonce: pending.nonce,
-		code_challenge: await codeChallenge(pending.verifier)
-	});
-	location.assign(`/v2/_angos/ui/oidc/authorize?${params}`);
+	try {
+		const challenge = await codeChallenge(pending.verifier);
+		if (config.exchange === 'registry') {
+			const params = new URLSearchParams({
+				redirect_uri: redirectUri(),
+				state: pending.state,
+				nonce: pending.nonce,
+				code_challenge: challenge
+			});
+			location.assign(`/v2/_angos/ui/oidc/authorize?${params}`);
+			return;
+		}
+
+		const { authorization } = await endpoints(config.issuer);
+		const params = new URLSearchParams({
+			response_type: 'code',
+			client_id: config.client_id,
+			redirect_uri: redirectUri(),
+			scope: config.scopes,
+			state: pending.state,
+			nonce: pending.nonce,
+			code_challenge: challenge,
+			code_challenge_method: 'S256'
+		});
+		location.assign(`${authorization}?${params}`);
+	} catch (e) {
+		underway = false;
+		failure = `Sign-in failed: ${e instanceof Error ? e.message : 'the provider could not be reached'}`;
+	}
 }
 
 /** Starts sign-in on the first request the registry refuses, so a private
@@ -264,7 +308,7 @@ async function refusal(response: Response): Promise<string> {
 
 /** The registry redeems the code, adding the client secret when it holds
  * one, and answers the ID token alone. */
-async function exchangeCode(code: string, pending: Pending): Promise<string> {
+async function exchangeAtRegistry(code: string, pending: Pending): Promise<string> {
 	const response = await fetch('/v2/_angos/ui/oidc/token', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -283,6 +327,46 @@ async function exchangeCode(code: string, pending: Pending): Promise<string> {
 		throw new Error('The registry returned no ID token');
 	}
 	return body.id_token;
+}
+
+/** The browser redeems the code at the provider's token endpoint itself. */
+async function exchangeAtProvider(
+	issuer: string,
+	clientId: string,
+	code: string,
+	pending: Pending
+): Promise<string> {
+	const { token } = await endpoints(issuer);
+	const response = await fetch(token, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+		body: new URLSearchParams({
+			grant_type: 'authorization_code',
+			code,
+			redirect_uri: redirectUri(),
+			client_id: clientId,
+			code_verifier: pending.verifier
+		})
+	});
+	if (!response.ok) {
+		throw new Error(`Token exchange failed (HTTP ${response.status})`);
+	}
+
+	const body = await response.json();
+	if (typeof body.id_token !== 'string') {
+		throw new Error('The provider returned no ID token');
+	}
+	return body.id_token;
+}
+
+async function exchangeCode(code: string, pending: Pending): Promise<string> {
+	const config = getOidcConfig();
+	if (!config) {
+		throw new Error('Sign-in is not configured');
+	}
+	return config.exchange === 'registry'
+		? exchangeAtRegistry(code, pending)
+		: exchangeAtProvider(config.issuer, config.client_id, code, pending);
 }
 
 /** Redeems the code the provider returned with, storing the session it
@@ -310,14 +394,17 @@ async function redeem(params: URLSearchParams, pending: Pending): Promise<string
 }
 
 /**
- * Runs before the app starts. On the load the provider returns to, redeems
- * the code and puts the address back to the page the user left, so the app
- * starts there, signed in, with no further load. On any other load, renews a
- * session that has lapsed before anything renders and is refused.
+ * Runs before the app starts, once the configuration has loaded. On the load
+ * the provider returns to, redeems the code and puts the address back to the
+ * page the user left, so the app starts there, signed in, with no further
+ * load. On any other load, a shared session that lapsed since the page that
+ * signed in is renewed before anything renders and is refused.
  */
 export async function finishSignIn(): Promise<void> {
+	await loadConfig();
+	session = parseSession(readStored(SESSION_KEY));
 	if (!returning) {
-		if (session && !currentSession()) {
+		if (getOidcConfig()?.share_session && session && !currentSession()) {
 			attempted = true;
 			storeSession(null);
 			await signIn();

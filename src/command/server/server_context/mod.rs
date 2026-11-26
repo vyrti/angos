@@ -17,7 +17,7 @@ use crate::command::server::error::Error;
 use crate::command::server::handlers::{UiConfigBody, UiOidcBody};
 use crate::command::server::router::Route;
 use crate::command::server::ui_sign_in::UiSignIn;
-use crate::configuration::{Configuration, TrustedProxy};
+use crate::configuration::{Configuration, TokenExchange, TrustedProxy};
 use crate::identity::{Action, ClientIdentity, RequestScheme};
 use crate::registry::{Error as RegistryError, Registry};
 
@@ -53,11 +53,13 @@ impl ServerContext {
             registry,
             enable_ui: config.ui.enabled,
             ui_config: build_ui_config(config),
-            // Configuration validation rejects a sign-in naming no provider.
+            // Served for the registry exchange only; configuration validation
+            // rejects a sign-in naming no provider.
             ui_sign_in: config
                 .ui
                 .oidc
                 .as_ref()
+                .filter(|sign_in| sign_in.exchange() == TokenExchange::Registry)
                 .and_then(|sign_in| Some((sign_in, config.auth.oidc.get(&sign_in.provider)?)))
                 .map(|(sign_in, provider)| {
                     UiSignIn::new(&sign_in.provider, provider, sign_in, cache)
@@ -232,6 +234,8 @@ fn build_ui_config(config: &Configuration) -> UiConfigBody {
             issuer: provider.issuer.clone(),
             client_id: sign_in.client_id.clone(),
             scopes: sign_in.scopes.clone(),
+            exchange: sign_in.exchange(),
+            share_session: sign_in.share_session,
         })
     });
 
