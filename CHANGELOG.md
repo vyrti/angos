@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `client_secret` in `[ui.oidc]` signs the web UI in with a confidential client; the registry keeps the secret, so it never reaches the browser.
+
+### Changed
+
+- The web UI's sign-in runs its discovery and code exchange through the registry (`/v2/_angos/ui/oidc/authorize` and `/v2/_angos/ui/oidc/token`, both the `ui-config` action) instead of calling the provider from the browser, so a provider serving no CORS headers, such as Forgejo or Gitea, works, and the browser receives the ID token alone, not the provider's access and refresh tokens.
+
+### Fixed
+
+- An OIDC issuer spelled with a trailing slash, as Gitea's is, is discovered at `<issuer>/.well-known/openid-configuration` instead of with a doubled slash.
+- The web UI starts sign-in on a refused request even when the refusal arrives before the UI's configuration has loaded, instead of staying signed out.
+- A sign-in the provider returns from is no longer raced by a fresh one started from the same page's refused requests, so a failed code exchange shows its error instead of sending the browser back to the provider.
+
 ## 1.13.0
 
 ### Added

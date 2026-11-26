@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use angos_secret::Secret;
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct UiConfig {
     #[serde(default)]
@@ -17,6 +19,10 @@ pub struct UiConfig {
 pub struct UiOidcConfig {
     pub provider: String,
     pub client_id: String,
+    /// Set for a confidential client. The registry redeems the code itself, so
+    /// the secret never reaches the browser.
+    #[serde(default)]
+    pub client_secret: Option<Secret<String>>,
     #[serde(default = "UiOidcConfig::default_scopes")]
     pub scopes: String,
 }

@@ -25,6 +25,14 @@ fn parse_routes_each_path_to_its_surface() {
         // Matched before the `_angos` parser, which declines it.
         (Method::GET, "/v2/_angos/ui/config", Some("ui-config")),
         (Method::POST, "/v2/_angos/ui/config", None),
+        (
+            Method::GET,
+            "/v2/_angos/ui/oidc/authorize",
+            Some("ui-authorize"),
+        ),
+        (Method::POST, "/v2/_angos/ui/oidc/authorize", None),
+        (Method::POST, "/v2/_angos/ui/oidc/token", Some("ui-token")),
+        (Method::GET, "/v2/_angos/ui/oidc/token", None),
         (Method::GET, "/v2/", Some("check-version")),
         (Method::HEAD, "/v2/", Some("check-version")),
         (Method::GET, "/v2/_catalog", Some("list-catalog")),

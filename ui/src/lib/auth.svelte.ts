@@ -22,8 +22,12 @@ const SESSION_KEY = 'angos-oidc-session';
 const PENDING_KEY = 'angos-oidc-pending';
 
 /** One automatic sign-in per page load, so a token the registry keeps
- * refusing cannot bounce the browser between here and the provider. */
-let attempted = false;
+ * refusing cannot bounce the browser between here and the provider. A load
+ * returning from the provider is that sign-in's own: the page's first requests
+ * are refused before the code is redeemed, and a failure has to stay on screen. */
+let attempted =
+	typeof location !== 'undefined' &&
+	['code', 'error'].some((name) => new URLSearchParams(location.search).has(name));
 
 function base64url(bytes: Uint8Array): string {
 	return btoa(String.fromCharCode(...bytes))
@@ -117,26 +121,20 @@ export function signOut() {
 	location.reload();
 }
 
-async function endpoints(issuer: string): Promise<{ authorization: string; token: string }> {
-	const url = `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
-	const response = await fetch(url);
-	if (!response.ok) {
-		throw new Error(`OIDC discovery failed (HTTP ${response.status})`);
-	}
-	const document = await response.json();
-	return { authorization: document.authorization_endpoint, token: document.token_endpoint };
-}
-
 /** The one URI the provider has to allow, the same for every page the user
  * signs in from: where they were is restored from storage afterwards. */
 function redirectUri(): string {
 	return `${location.origin}/`;
 }
 
+/**
+ * Sends the browser to the provider by way of the registry, which discovers
+ * the authorization endpoint itself: the provider is never called from the
+ * page, so it needs to serve no CORS headers.
+ */
 export async function signIn(): Promise<void> {
 	await loadConfig();
-	const config = getOidcConfig();
-	if (!config) return;
+	if (!signInAvailable()) return;
 
 	const pending: Pending = {
 		verifier: randomString(),
@@ -146,54 +144,56 @@ export async function signIn(): Promise<void> {
 	};
 	sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
 
-	const { authorization } = await endpoints(config.issuer);
 	const params = new URLSearchParams({
-		response_type: 'code',
-		client_id: config.client_id,
 		redirect_uri: redirectUri(),
-		scope: config.scopes,
 		state: pending.state,
 		nonce: pending.nonce,
-		code_challenge: await codeChallenge(pending.verifier),
-		code_challenge_method: 'S256'
+		code_challenge: await codeChallenge(pending.verifier)
 	});
-	location.assign(`${authorization}?${params}`);
+	location.assign(`/v2/_angos/ui/oidc/authorize?${params}`);
 }
 
 /** Starts sign-in on the first request the registry refuses, so a private
  * registry needs no click while a public one is still browsed anonymously. */
 export async function signInOnUnauthorized(): Promise<void> {
-	if (attempted || currentSession() || !signInAvailable()) return;
+	if (attempted || currentSession()) return;
 	attempted = true;
-	await signIn();
+	// The first refusal can arrive before the configuration saying whether
+	// sign-in is offered at all.
+	await loadConfig();
+	if (signInAvailable()) await signIn();
 }
 
-async function exchangeCode(code: string, pending: Pending): Promise<string> {
-	await loadConfig();
-	const config = getOidcConfig();
-	if (!config) {
-		throw new Error('Sign-in is not configured');
+/** The registry's reason for a failed exchange, which carries the provider's. */
+async function refusal(response: Response): Promise<string> {
+	try {
+		const message = (await response.json())?.errors?.[0]?.message;
+		if (typeof message === 'string') return `Sign-in failed: ${message}`;
+	} catch {
+		// Not the registry's error body: the status is all there is.
 	}
+	return `Sign-in failed (HTTP ${response.status})`;
+}
 
-	const { token } = await endpoints(config.issuer);
-	const response = await fetch(token, {
+/** The registry redeems the code, adding the client secret when it holds
+ * one, and answers the ID token alone. */
+async function exchangeCode(code: string, pending: Pending): Promise<string> {
+	const response = await fetch('/v2/_angos/ui/oidc/token', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({
-			grant_type: 'authorization_code',
 			code,
-			redirect_uri: redirectUri(),
-			client_id: config.client_id,
-			code_verifier: pending.verifier
+			code_verifier: pending.verifier,
+			redirect_uri: redirectUri()
 		})
 	});
 	if (!response.ok) {
-		throw new Error(`Token exchange failed (HTTP ${response.status})`);
+		throw new Error(await refusal(response));
 	}
 
 	const body = await response.json();
 	if (typeof body.id_token !== 'string') {
-		throw new Error('The provider returned no ID token');
+		throw new Error('The registry returned no ID token');
 	}
 	return body.id_token;
 }

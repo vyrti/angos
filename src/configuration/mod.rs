@@ -30,7 +30,7 @@ pub use regex_pattern::RegexPattern;
 pub use registry_storage::RegistryStorageConfig;
 pub use server::ServerConfig;
 pub use trusted_proxy::TrustedProxy;
-pub use ui::UiConfig;
+pub use ui::{UiConfig, UiOidcConfig};
 
 #[cfg(test)]
 mod tests;

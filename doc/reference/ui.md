@@ -31,15 +31,21 @@ provider = "dex"
 client_id = "angos-ui"
 ```
 
-| Option      | Type   | Default                  | Description                                          |
-|-------------|--------|--------------------------|------------------------------------------------------|
-| `provider`  | string | required                 | The `auth.oidc` provider to sign in against          |
-| `client_id` | string | required                 | The provider's public client, holding no secret      |
-| `scopes`    | string | `"openid profile email"` | The OAuth `scope` parameter, verbatim                |
+| Option          | Type   | Default                  | Description                                          |
+|-----------------|--------|--------------------------|------------------------------------------------------|
+| `provider`      | string | required                 | The `auth.oidc` provider to sign in against          |
+| `client_id`     | string | required                 | The client registered at the provider                |
+| `client_secret` | string | -                        | The client's secret, for a confidential client       |
+| `scopes`        | string | `"openid profile email"` | The OAuth `scope` parameter, verbatim                |
 
 `provider` names a configured `[auth.oidc.<name>]` section and the registry refuses
 to start when no such provider exists. The issuer is read from it, so the browser
 can only be sent to an issuer the registry validates tokens from.
+
+The registry runs the provider side of the flow: it reads the issuer's discovery
+document and redeems the authorization code itself, so the provider needs no
+CORS settings, and `client_secret` never reaches the browser. Leave it out for a
+public client. The browser always uses PKCE (S256), whichever kind of client it is.
 
 Without this section the UI offers no sign-in and sends no credentials, which is
 what a registry readable anonymously or fronted by an authenticating proxy wants.
@@ -92,8 +98,43 @@ Returns the UI configuration.
 ```
 
 The `oidc` object is present only when `[ui.oidc]` is configured. Every field in
-it is public by nature: the client holds no secret. The endpoint itself needs no
-credentials, since the UI reads it before anyone has signed in.
+it is public by nature; `client_secret` is never part of it. The endpoint itself
+needs no credentials, since the UI reads it before anyone has signed in.
+
+### Sign-In
+
+```
+GET /v2/_angos/ui/oidc/authorize?redirect_uri=…&state=…&nonce=…&code_challenge=…
+```
+
+Starts a sign-in: answers `302` to the provider's `authorization_endpoint`, adding
+`response_type=code`, the configured `client_id` and `scopes`, and
+`code_challenge_method=S256`. A request missing a parameter is refused with `400`.
+
+```
+POST /v2/_angos/ui/oidc/token
+Content-Type: application/x-www-form-urlencoded
+
+code=…&code_verifier=…&redirect_uri=…
+```
+
+Finishes it: redeems the code at the provider's `token_endpoint`, adding the client
+credentials, and answers the ID token alone, with `Cache-Control: no-store`:
+
+```json
+{ "id_token": "eyJhbGciOi…" }
+```
+
+The provider's access and refresh tokens are dropped: they would let the browser
+act at the provider as the user. A client secret travels in a Basic header, or in
+the form when the provider's discovery document offers `client_secret_post` and
+not `client_secret_basic`. A code the provider refuses answers `400` naming the
+provider's `error`; a provider that cannot be reached, or answers without an ID
+token, answers `503`.
+
+Both endpoints answer `404` when `[ui.oidc]` is not configured, and both are the
+`ui-config` action to access policies, so the rule that lets the UI load also
+lets a browser sign in.
 
 ### Static Assets
 
@@ -108,7 +149,7 @@ UI-specific actions for access policies:
 | Action              | Description                               |
 |---------------------|-------------------------------------------|
 | `ui-asset`          | Static files (JS, CSS, images)            |
-| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`) |
+| `ui-config`         | UI configuration endpoint (`/v2/_angos/ui/config`) and the sign-in endpoints (`/v2/_angos/ui/oidc/...`) |
 | `list-repositories` | Repository list view                      |
 | `list-namespaces`   | Namespace list view                       |
 | `list-revisions`    | Manifest list view                        |

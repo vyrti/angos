@@ -25,6 +25,35 @@ struct OpenIdConfiguration {
     jwks_uri: String,
 }
 
+/// The endpoints the web UI's sign-in reads from the issuer's discovery
+/// document. Cached under their own key: the JWKS lookup's cached copy may
+/// predate them, and an issuer that only signs tokens publishes none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SignInEndpoints {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(default)]
+    pub token_endpoint_auth_methods_supported: Vec<String>,
+}
+
+/// A discovery document, whose `issuer` must be the configured one.
+trait DiscoveryDocument: DeserializeOwned + Serialize {
+    fn issuer(&self) -> &str;
+}
+
+impl DiscoveryDocument for OpenIdConfiguration {
+    fn issuer(&self) -> &str {
+        &self.issuer
+    }
+}
+
+impl DiscoveryDocument for SignInEndpoints {
+    fn issuer(&self) -> &str {
+        &self.issuer
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Jwks {
     keys: Vec<Jwk>,
@@ -368,9 +397,11 @@ async fn fetch_jwks(
     let jwks_url = match provider.jwks_uri.as_deref() {
         Some(uri) => uri.to_string(),
         None => {
-            fetch_oidc_configuration_with_timeout(provider, client, cache, timeout)
-                .await?
-                .jwks_uri
+            fetch_discovery_document::<OpenIdConfiguration>(
+                provider, client, cache, "config", timeout,
+            )
+            .await?
+            .jwks_uri
         }
     };
     let fetched = fetch_cached_json::<Jwks, _>(
@@ -427,15 +458,33 @@ async fn refresh_jwks_rate_limited(
         .map(Some)
 }
 
-async fn fetch_oidc_configuration_with_timeout(
+/// The authorization and token endpoints the UI's sign-in runs against.
+pub async fn fetch_sign_in_endpoints(
     provider: &Config,
     client: &Client,
     cache: &Cache,
+) -> Result<SignInEndpoints, Error> {
+    let fetch_timeout = Duration::from_secs(provider.http_request_timeout_secs);
+    fetch_discovery_document(provider, client, cache, "sign-in", fetch_timeout).await
+}
+
+/// The issuer's `.well-known/openid-configuration`, cached under `kind`. A
+/// trailing slash on the issuer is dropped before the suffix, as OIDC
+/// Discovery requires, so `https://gitea.example.com/` is not asked for
+/// `//.well-known/...`; the document must still name the issuer as configured.
+async fn fetch_discovery_document<T: DiscoveryDocument>(
+    provider: &Config,
+    client: &Client,
+    cache: &Cache,
+    kind: &str,
     fetch_timeout: Duration,
-) -> Result<OpenIdConfiguration, Error> {
-    let cache_key = issuer_key(provider, "config");
-    let config_url = format!("{}/.well-known/openid-configuration", provider.issuer);
-    let fetched = fetch_cached_json::<OpenIdConfiguration, _>(
+) -> Result<T, Error> {
+    let cache_key = issuer_key(provider, kind);
+    let config_url = format!(
+        "{}/.well-known/openid-configuration",
+        provider.issuer.trim_end_matches('/')
+    );
+    let fetched = fetch_cached_json::<T, _>(
         CachedJsonRequest {
             client,
             provider,
@@ -445,13 +494,14 @@ async fn fetch_oidc_configuration_with_timeout(
             read_cache: true,
             fetch_timeout,
         },
-        |config| {
-            if config.issuer == provider.issuer {
+        |document| {
+            if document.issuer() == provider.issuer {
                 Ok(())
             } else {
                 Err(Error::Unauthorized(format!(
                     "OIDC configuration issuer mismatch: expected {}, got {}",
-                    provider.issuer, config.issuer
+                    provider.issuer,
+                    document.issuer()
                 )))
             }
         },

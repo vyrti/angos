@@ -8,6 +8,7 @@ mod listeners;
 mod request;
 mod router;
 mod server_context;
+mod ui_sign_in;
 
 pub use command::{Command, Options};
 pub use error::Error;

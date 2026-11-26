@@ -229,7 +229,7 @@ impl Authenticator {
 /// One client per provider: its TLS material is baked in when it is built, so a
 /// provider trusting its own issuer, or authenticating to it, cannot share one
 /// with the others.
-fn build_oidc_client(name: &str, config: &oidc::Config) -> Result<Client, Error> {
+pub fn build_oidc_client(name: &str, config: &oidc::Config) -> Result<Client, Error> {
     let initialization_error = |e: String| {
         Error::Initialization(format!(
             "Failed to create HTTP client for auth.oidc.{name}: {e}"

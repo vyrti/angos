@@ -80,15 +80,17 @@ Repositories → Namespaces → Manifests → Details
 ## Sign In with OIDC
 
 The UI signs a browser in against one of the registry's own OIDC providers and
-sends the resulting ID token as a bearer on every call it makes.
+sends the resulting ID token as a bearer on every call it makes. The registry
+runs the provider side of the flow, discovery and the code exchange, so the
+provider needs no CORS settings.
 
-### Step 1: Register a Public Client
+### Step 1: Register a Client
 
-At the provider, create a public client (no secret, PKCE required) with:
+At the provider, create a client with:
 
 - **Redirect URI**: the registry's root, such as `https://registry.example.com/`
-- **CORS / web origins**: the same origin, since the browser reads the provider's
-  discovery document and calls its token endpoint directly
+- **Client type**: public (no secret, PKCE) or confidential (with a secret the
+  registry keeps); the browser uses PKCE either way
 
 ### Step 2: Point the UI at a Provider
 
@@ -103,6 +105,7 @@ enabled = true
 [ui.oidc]
 provider = "dex"
 client_id = "angos-ui"
+# client_secret = "..."              # confidential clients only
 scopes = "openid profile email"      # default
 ```
 
@@ -124,6 +127,55 @@ rules = [
   "identity.oidc != null && identity.oidc.claims['email'].endsWith('@example.com')"
 ]
 ```
+
+### Forgejo and Gitea
+
+Forgejo and Gitea are OIDC providers of their own, and serve no CORS headers by
+default, which the registry-run exchange does not need.
+
+1. Create an OAuth2 application: **Settings → Applications → Manage OAuth2
+   applications** for one user, the same page under an organization's settings,
+   or **Site Administration → Integrations → Applications** for the instance.
+   Set the redirect URI to the registry's root. Keep **Confidential client**
+   ticked to get a secret, or untick it for a public client.
+2. Read the issuer from `https://git.example.com/.well-known/openid-configuration`
+   and copy it exactly: Forgejo spells it without a trailing slash, Gitea with
+   one, and the `iss` of every token matches it.
+3. Configure the provider and the sign-in:
+
+```toml
+[auth.oidc.forgejo]
+issuer = "https://git.example.com"
+required_audience = "<client id>"
+
+[ui]
+enabled = true
+
+[ui.oidc]
+provider = "forgejo"
+client_id = "<client id>"
+client_secret = "<client secret>"
+scopes = "openid profile email groups"
+```
+
+With the `groups` scope the ID token carries `groups`: the user's organizations,
+plus `org:team` for each team. `preferred_username` is the login name. A user in
+no organization gets no `groups` claim at all, and reading a missing claim stops
+rule evaluation, so test for it first:
+
+```toml
+[global.access_policy]
+default = "deny"
+rules = [
+  "request.action == 'ui-asset' || request.action == 'ui-config'",
+  "identity.oidc != null && 'groups' in identity.oidc.claims && 'my-org:maintainers' in identity.oidc.claims['groups']",
+  "identity.oidc != null && 'groups' in identity.oidc.claims && 'my-org' in identity.oidc.claims['groups'] && request.action.startsWith('list-')",
+]
+```
+
+A Forgejo ID token lives as long as its access tokens,
+`[oauth2] ACCESS_TOKEN_EXPIRATION_TIME`, an hour by default; the UI asks to sign in
+again once it expires. Forgejo skips its consent page after the first approval.
 
 ### How It Behaves
 
@@ -269,9 +321,12 @@ Open the UI and use **Sign in** to check an OIDC setup end to end.
 
 ### Sign-In Fails
 
-- Check the provider allows the registry's origin (CORS) on its discovery and
-  token endpoints; the browser calls both directly.
 - Check the redirect URI registered at the provider is the registry's root.
+- A `503` from `/v2/_angos/ui/oidc/...` is the registry failing to reach the
+  provider, or reading a discovery document whose `issuer` differs from the
+  configured one; the registry log names which.
+- "Sign-in failed: the provider refused the code: invalid_client" is a wrong
+  `client_id` or `client_secret`, or a secret missing for a confidential client.
 - A 401 that persists after signing in is the registry refusing the token: check
   `required_audience` against the client id, and that the provider's `issuer`
   matches the `iss` its tokens carry.

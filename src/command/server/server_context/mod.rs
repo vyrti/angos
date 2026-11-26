@@ -16,6 +16,7 @@ use crate::auth::{Authenticator, Authorizer, TokenIssuer};
 use crate::command::server::error::Error;
 use crate::command::server::handlers::{UiConfigBody, UiOidcBody};
 use crate::command::server::router::Route;
+use crate::command::server::ui_sign_in::UiSignIn;
 use crate::configuration::{Configuration, TrustedProxy};
 use crate::identity::{Action, ClientIdentity, RequestScheme};
 use crate::registry::{Error as RegistryError, Registry};
@@ -28,6 +29,7 @@ pub struct ServerContext {
     pub registry: Arc<Registry>,
     pub enable_ui: bool,
     pub ui_config: UiConfigBody,
+    pub ui_sign_in: Option<UiSignIn>,
 }
 
 impl ServerContext {
@@ -51,6 +53,16 @@ impl ServerContext {
             registry,
             enable_ui: config.ui.enabled,
             ui_config: build_ui_config(config),
+            // Configuration validation rejects a sign-in naming no provider.
+            ui_sign_in: config
+                .ui
+                .oidc
+                .as_ref()
+                .and_then(|sign_in| Some((sign_in, config.auth.oidc.get(&sign_in.provider)?)))
+                .map(|(sign_in, provider)| {
+                    UiSignIn::new(&sign_in.provider, provider, sign_in, cache)
+                })
+                .transpose()?,
         })
     }
 
