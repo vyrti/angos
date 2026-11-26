@@ -197,11 +197,16 @@ again once it expires. Forgejo skips its consent page after the first approval.
   so a private registry needs no click, while a registry readable anonymously is
   still browsed without signing in. It starts once per page load, so a token the
   registry keeps refusing cannot bounce the browser back and forth.
-- The token lives in the tab's session storage and is dropped when it expires or
-  when the tab closes. There is no refresh: an expired session means signing in
-  again.
-- **Sign out** clears the token here only. It does not end the session at the
-  provider, so signing in again may not prompt for credentials.
+- Returning from the provider takes one page load: the code is redeemed before
+  the page renders, which then opens where the user left, signed in.
+- The token lives in the browser's local storage, shared by every tab and window
+  of the registry, so a new one opens signed in with no redirect, until the token
+  expires. There is no refresh: an expired token is renewed through the provider
+  as the page loads, which takes no click while the provider's own session lasts.
+- **Sign out** signs out every tab and stops automatic sign-in until **Sign in**
+  is clicked, so a private registry then answers "sign in required" rather than
+  signing straight back in. It does not end the session at the provider, so
+  signing in again may not prompt for credentials.
 - Download links (ORAS artifact files, layer file downloads) are followed by the
   browser rather than fetched, so they carry no token and work only where the
   policy allows the `get-blob` action anonymously.

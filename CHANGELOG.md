@@ -19,7 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - An OIDC issuer spelled with a trailing slash, as Gitea's is, is discovered at `<issuer>/.well-known/openid-configuration` instead of with a doubled slash.
 - The web UI starts sign-in on a refused request even when the refusal arrives before the UI's configuration has loaded, instead of staying signed out.
 - With `[ui.oidc]` configured, the web UI's requests leave out the browser's own credentials, so a refused request no longer raises the browser's password dialog before sign-in starts.
-- While a sign-in is under way, handing the browser to the provider or redeeming the code it returns with, the web UI shows "Signing in" instead of flashing the errors of the requests it made before the session existed.
+- While the web UI hands the browser to the provider it shows "Signing in" instead of flashing the errors of the requests it made before the session existed.
+- The web UI keeps its sign-in in local storage, shared by every tab and window, so a new one opens signed in instead of repeating the redirects; the code the provider returns with is redeemed before the page renders, so returning takes one page load instead of three; and an expired sign-in is renewed as the page loads instead of after its requests are refused.
+- **Sign out** in the web UI stays signed out, in every tab, instead of signing straight back in through the provider's own session; the registry's refusals then read "sign in required".
 - A sign-in the provider returns from is no longer raced by a fresh one started from the same page's refused requests, so a failed code exchange shows its error instead of sending the browser back to the provider.
 
 ## 1.13.0

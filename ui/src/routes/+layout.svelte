@@ -8,17 +8,16 @@
 	import ErrorState from '#lib/components/ErrorState.svelte';
 	import LoadingState from '#lib/components/LoadingState.svelte';
 	import { loadConfig, getRegistryName } from '#lib/config.svelte.js';
-	import { completeSignIn, signingIn } from '#lib/auth.svelte.js';
+	import { signInFailure, signingIn } from '#lib/auth.svelte.js';
 	import { trail } from '#lib/trail.svelte.js';
 
 	let { children } = $props();
 	let registryName = $state('Angos');
-	let signInError: string | null = $state(null);
+	const signInError = $derived(signInFailure());
 
 	onMount(async () => {
 		await loadConfig();
 		registryName = getRegistryName();
-		signInError = await completeSignIn();
 	});
 </script>
 

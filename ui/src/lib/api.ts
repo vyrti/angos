@@ -1,4 +1,4 @@
-import { authHeaders, fetchCredentials, signInOnUnauthorized } from './auth.svelte';
+import { authHeaders, fetchCredentials, signInAvailable, signInOnUnauthorized } from './auth.svelte';
 import { isDigest } from './utils';
 
 export interface Platform {
@@ -199,11 +199,17 @@ export async function authedFetch(url: string, options?: RequestInit): Promise<R
 	return response;
 }
 
+/** Why a request failed, as the views show it: a refusal for want of a
+ * sign-in says so when signing in is offered. */
+function failure(response: Response): string {
+	return response.status === 401 && signInAvailable() ? 'sign in required' : `HTTP ${response.status}`;
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<FetchResult<T>> {
 	try {
 		const response = await authedFetch(url, options);
 		if (!response.ok) {
-			return { data: null, error: `HTTP ${response.status}` };
+			return { data: null, error: failure(response) };
 		}
 		const data: T = await response.json();
 		return { data, error: null };
@@ -215,7 +221,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<FetchRe
 async function send(url: string, method: 'DELETE' | 'POST'): Promise<string | null> {
 	try {
 		const response = await authedFetch(url, { method });
-		return response.ok ? null : `HTTP ${response.status}`;
+		return response.ok ? null : failure(response);
 	} catch (e) {
 		return e instanceof Error ? e.message : method === 'DELETE' ? 'Delete failed' : 'Request failed';
 	}
@@ -370,7 +376,7 @@ export async function fetchManifest(namespace: string, reference: string): Promi
 			headers: { 'Accept': MANIFEST_ACCEPT_HEADER, 'X-Angos-No-Redirect': '1' }
 		});
 		if (!response.ok) {
-			return { manifest: null, digest: null, error: `HTTP ${response.status}` };
+			return { manifest: null, digest: null, error: failure(response) };
 		}
 		const digest = response.headers.get('Docker-Content-Digest');
 		const manifest: Manifest = await response.json();
@@ -400,7 +406,7 @@ export async function fetchReferrers(
 	try {
 		const response = await authedFetch(`/v2/${namespace}/referrers/${digest}?${params}`);
 		if (!response.ok) {
-			return { data: null, error: `HTTP ${response.status}` };
+			return { data: null, error: failure(response) };
 		}
 		const index: { manifests?: Descriptor[] } = await response.json();
 		const referrers = (index.manifests ?? []).map(descriptor => ({
@@ -500,7 +506,7 @@ export async function fetchLayerEntries(namespace: string, digest: string): Prom
 			return { listing: null, pending: true, error: null };
 		}
 		if (!response.ok) {
-			return { listing: null, pending: false, error: `HTTP ${response.status}` };
+			return { listing: null, pending: false, error: failure(response) };
 		}
 		return { listing: await response.json(), pending: false, error: null };
 	} catch (e) {
