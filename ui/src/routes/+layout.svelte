@@ -6,8 +6,9 @@
 	import ThemeSwitcher from '#lib/components/ThemeSwitcher.svelte';
 	import SignIn from '#lib/components/SignIn.svelte';
 	import ErrorState from '#lib/components/ErrorState.svelte';
+	import LoadingState from '#lib/components/LoadingState.svelte';
 	import { loadConfig, getRegistryName } from '#lib/config.svelte.js';
-	import { completeSignIn } from '#lib/auth.svelte.js';
+	import { completeSignIn, signingIn } from '#lib/auth.svelte.js';
 	import { trail } from '#lib/trail.svelte.js';
 
 	let { children } = $props();
@@ -55,10 +56,14 @@
 </header>
 
 <main>
-	{#if signInError}
-		<ErrorState message={signInError} />
+	{#if signingIn()}
+		<LoadingState message="Signing in" />
+	{:else}
+		{#if signInError}
+			<ErrorState message={signInError} />
+		{/if}
+		{@render children()}
 	{/if}
-	{@render children()}
 </main>
 
 <style>

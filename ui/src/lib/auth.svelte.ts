@@ -21,13 +21,25 @@ interface Pending {
 const SESSION_KEY = 'angos-oidc-session';
 const PENDING_KEY = 'angos-oidc-pending';
 
+/** Whether this load is the provider redirecting back with a sign-in's answer. */
+const returning =
+	typeof location !== 'undefined' &&
+	['code', 'error'].some((name) => new URLSearchParams(location.search).has(name));
+
 /** One automatic sign-in per page load, so a token the registry keeps
  * refusing cannot bounce the browser between here and the provider. A load
  * returning from the provider is that sign-in's own: the page's first requests
  * are refused before the code is redeemed, and a failure has to stay on screen. */
-let attempted =
-	typeof location !== 'undefined' &&
-	['code', 'error'].some((name) => new URLSearchParams(location.search).has(name));
+let attempted = returning;
+
+/** A sign-in under way: the browser is being handed to the provider, or this
+ * load is its return and the code is not yet redeemed. The page's requests in
+ * between go out anonymous and are refused, so their errors are not shown. */
+let underway = $state(returning);
+
+export function signingIn(): boolean {
+	return underway;
+}
 
 function base64url(bytes: Uint8Array): string {
 	return btoa(String.fromCharCode(...bytes))
@@ -146,6 +158,7 @@ function redirectUri(): string {
 export async function signIn(): Promise<void> {
 	await loadConfig();
 	if (!signInAvailable()) return;
+	underway = true;
 
 	const pending: Pending = {
 		verifier: randomString(),
@@ -222,10 +235,17 @@ export async function completeSignIn(): Promise<string | null> {
 
 	const stored = sessionStorage.getItem(PENDING_KEY);
 	sessionStorage.removeItem(PENDING_KEY);
-	if (!stored) return null;
+	if (!stored) {
+		underway = false;
+		return null;
+	}
 	const pending: Pending = JSON.parse(stored);
 
-	const restore = () => goto(pending.origin, { replace: true });
+	// Every failure ends here, and the page it returns to shows what failed.
+	const restore = () => {
+		underway = false;
+		return goto(pending.origin, { replace: true });
+	};
 
 	if (failure) {
 		await restore();
