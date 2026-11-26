@@ -40,7 +40,7 @@ fn certificate(pem: &Pem) -> Option<Certificate> {
         .subject_alternative_name()
         .ok()
         .flatten()
-        .map(|names| {
+        .map_or_default(|names| {
             names
                 .value
                 .general_names
@@ -51,8 +51,7 @@ fn certificate(pem: &Pem) -> Option<Certificate> {
                     _ => None,
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     Some(Certificate {
         subject: x509.subject().to_string(),
         issuer: x509.issuer().to_string(),

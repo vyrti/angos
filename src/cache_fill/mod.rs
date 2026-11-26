@@ -84,7 +84,7 @@ impl CacheFillJobHandler {
     /// re-run an idempotent fill.
     async fn fill(&self, namespace: &Namespace, digest: &Digest) -> Result<(), RegistryError> {
         let repository = self.resolver.resolve(namespace);
-        let repository_name = repository.map(|r| r.name.to_string()).unwrap_or_default();
+        let repository_name = repository.map_or_default(|r| r.name.to_string());
         let event = Event::new(
             EventSubject::BlobPush {
                 digest: digest.clone(),

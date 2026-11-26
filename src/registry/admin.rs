@@ -142,22 +142,19 @@ fn parent_refs_for(
     child_to_parents: &HashMap<Digest, Vec<(Digest, Option<Platform>)>>,
     digest_to_tags: &HashMap<Digest, Vec<Tag>>,
 ) -> Vec<ParentRef> {
-    child_to_parents
-        .get(digest)
-        .map(|parents| {
-            parents
-                .iter()
-                .map(|(parent_digest, platform)| ParentRef {
-                    digest: parent_digest.to_string(),
-                    tags: digest_to_tags
-                        .get(parent_digest)
-                        .cloned()
-                        .unwrap_or_default(),
-                    platform: platform.clone(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    child_to_parents.get(digest).map_or_default(|parents| {
+        parents
+            .iter()
+            .map(|(parent_digest, platform)| ParentRef {
+                digest: parent_digest.to_string(),
+                tags: digest_to_tags
+                    .get(parent_digest)
+                    .cloned()
+                    .unwrap_or_default(),
+                platform: platform.clone(),
+            })
+            .collect()
+    })
 }
 
 /// `ordering` as a listing sorted in `order` reads it.
