@@ -79,8 +79,8 @@ jobs:
           aws --endpoint-url http://127.0.0.1:9000 s3api create-bucket --bucket registry
 
         CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw' cargo test --workspace
-        grcov . --binary-path ./target/debug/deps/ -s . -t html --branch --ignore-not-existing --ignore "target/**" -o target/coverage/html
-        grcov . --binary-path ./target/debug/deps/ -s . -t markdown --branch --ignore-not-existing --ignore "../*" --ignore "/*" --ignore "target/**"
+        grcov . --binary-path ./target/debug/ -s . -t html --branch --ignore-not-existing --ignore "target/**" -o target/coverage/html
+        grcov . --binary-path ./target/debug/ -s . -t markdown --branch --ignore-not-existing --ignore "../*" --ignore "/*" --ignore "target/**"
 
         docker stop rustfs
     - name: Upload coverage report
