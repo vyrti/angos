@@ -155,8 +155,21 @@ enabled = true
 provider = "forgejo"
 client_id = "<client id>"
 client_secret = "<client secret>"
-scopes = "openid profile email groups"
+scopes = "openid profile email groups public-only"
 ```
+
+`public-only` is what keeps this a sign-in and nothing more. Forgejo issues an
+API access token alongside every ID token, and one granted no API scope may do
+anything the user can, private repositories and organizations included. Naming
+`public-only` alone grants it no permission at all, so every API call needing
+one is refused. The registry drops that token in any case, keeping only the ID
+token, but this way it is worthless even while it exists. Forgejo 15's consent
+page still shows its fixed warning about full account access the first time; for
+this client it no longer holds.
+
+A user who approved the client with other scopes keeps that grant, and Forgejo
+reuses it without asking: revoke it under **Settings → Applications → Authorized
+OAuth2 Applications** to pick up the new scopes.
 
 With the `groups` scope the ID token carries `groups`: the user's organizations,
 plus `org:team` for each team. `preferred_username` is the login name. A user in
